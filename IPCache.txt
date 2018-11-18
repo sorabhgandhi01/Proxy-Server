@@ -1,0 +1,2 @@
+www.yahoo.com : 98.138.219.231
+www.colorado.edu : 128.138.129.98
