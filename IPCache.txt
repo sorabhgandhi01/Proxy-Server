@@ -1,2 +1,3 @@
-www.yahoo.com : 98.138.219.231
-www.colorado.edu : 128.138.129.98
+morse.colorado.edu : 128.138.184.74
+netstech.org : 144.208.69.121
+www.websites.web.com : 64.69.213.61

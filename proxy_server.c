@@ -47,9 +47,10 @@ SOFTWARE.
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <openssl/md5.h>
 
-#define MAX_BUF_SIZE 1024
-#define t_out 10
+#define MAX_BUF_SIZE 2048
+#define t_out 0
 
 /*Function to print error message*/
 void print_error(char *msg)
@@ -89,7 +90,10 @@ static int isURLpresent(char *filename, char *url)
 
 static char *parsehostname(char *url)
 {
-    char *host_name = strstr(url, "//");
+	char temp[1024];
+	strcpy(temp, url);
+
+    char *host_name = strstr(temp, "//");
     char *domain_name = strtok(&host_name[2], "/");
 
     if (domain_name != NULL)
@@ -134,10 +138,230 @@ void addURLtoFile(char *filename, char *url, char *ip)
     fclose(f);
 }
 
+static int checkpagecache(char *filename, char *url)
+{
+    char buffer[512];
+    char s_url[512];
+    snprintf(s_url, 511, "%s ", url);
+
+    FILE *f = fopen(filename, "r");
+
+    while(!feof(f))
+    {
+        fgets(buffer, 511, f);
+        char *match = strstr(buffer, s_url);
+
+        if (match != NULL)
+            return 1;
+    }
+
+    return 0;
+}
+
+void addToPageCache(char *filename, char *url)
+{
+    char buffer[512];
+
+    FILE *f = fopen(filename, "a");
+    snprintf(buffer, 511, "%s %lu\n", url, time(NULL));
+    fprintf(f, "%s", buffer);
+
+    fclose(f);
+}
+
+static int checkTimeStamp(char *filename, char *url, int timeout)
+{
+    char buffer[512];
+    char s_url[512];
+    snprintf(s_url, 511, "%s ", url);
+
+    FILE *f = fopen(filename, "r");
+    
+    while(!feof(f))
+    {
+        fgets(buffer, 511, f);
+        char *match = strstr(buffer, s_url);
+
+        if (match != NULL) {
+            char temp[256];
+            time_t prev_time;
+            sscanf(match, "%s %ld", temp, &prev_time);
+
+            if (difftime(time(NULL), prev_time) > timeout)
+                return 1;
+        }
+    }
+
+    return 0;
+}
+
+void updateTimeStamp(char *filename, char *input_url)
+{
+    FILE *ptr = fopen(filename, "a+");
+    char url[512];
+    strcpy(url, input_url);
+
+    fseek(ptr, 0, SEEK_END);
+    size_t file_size = ftell(ptr);
+    fseek(ptr, 0, SEEK_SET);
+
+    char *data = (char *)malloc(file_size);
+    fread(data, 1, file_size, ptr);
+    char *match = strstr(data, url);
+    fclose(ptr);
+
+    ptr = fopen(filename, "w+");
+    char new_data[512];
+    sprintf(new_data, "%s %lu", url, time(NULL));
+    int i = 0;
+    while(new_data[i])
+    {
+        *match = new_data[i];
+        i++; match++;
+    }
+
+    fwrite(data, 1, file_size, ptr);
+    fclose(ptr);
+    free(data);
+}
+
+char *str2md5(const char *str, int length) {
+    int n;
+    MD5_CTX c;
+    unsigned char digest[16];
+    char *out = (char*)malloc(33);
+
+    MD5_Init(&c);
+
+    while (length > 0) {
+        if (length > 512) {
+            MD5_Update(&c, str, 512);
+        } else {
+            MD5_Update(&c, str, length);
+        }
+        length -= 512;
+        str += 512;
+    }
+
+    MD5_Final(digest, &c);
+
+    for (n = 0; n < 16; ++n) {
+        snprintf(&(out[n*2]), 16*2, "%02x", (unsigned int)digest[n]);
+    }
+
+    return out;
+}
+
+void init_ServerRequest(char *url, char *c_resp, char *ip, int cfd, int port)
+{
+    char buf[1024];
+    struct sockaddr_in p_server;
+    int p_sfd, p_sock, n;
+
+    memset(&p_server, 0, sizeof(p_server));
+    p_server.sin_family = AF_INET;
+    p_server.sin_addr.s_addr = inet_addr(ip);
+    p_server.sin_port = htons(port);
+
+	printf("For remote Connection: IP -> %s	Port -> %d\n", ip, port);
+	printf("For remote Connnection: HTTp Request -> %s\n", c_resp);
+
+    p_sfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (p_sfd < 0)
+		perror("Socket init failed");
+
+    p_sock = connect(p_sfd, (struct sockaddr *)&p_server, sizeof(p_server));
+
+    if (p_sock < 0)
+        perror("Connection Failed");
+    
+    if (send(p_sfd, c_resp, strlen(c_resp), 0) < 0)
+        perror("Remote Socket write failed");
+    else {
+
+        char *filename = str2md5(url, strlen(url));
+        printf("filename --> %s\n", filename);
+        char filepath[512];
+        sprintf(filepath, "./cache/%s.html", filename);
+        FILE *fp = fopen(filepath, "w+");
+        do
+        {
+			printf("getting page from the remote connection\n");
+            memset(buf, 0, sizeof(buf));
+            n = recv(p_sfd, buf, 500, 0);
+            fwrite(buf, 1, n, fp);
+            if (!(n<=0))
+                send(cfd, buf, n, 0);
+        } while(n > 0);
+
+        fclose(fp);
+    }
+
+	close(p_sfd);
+
+}
+
+void send_from_cache(char *url, int cfd)
+{
+    char filepath[1024];
+    int n;
+    char *filename = str2md5(url, strlen(url));
+    sprintf(filepath, "./cache/%s.html", filename);
+
+    FILE *fp = fopen(filepath, "r");
+    fseek(fp, 0, SEEK_END);
+    size_t file_size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    char *data = (char *)malloc(file_size);
+    n = fread(data, 1, file_size, fp);
+    send(cfd, data, n, 0);
+
+    free(data);
+}
+
+void handleClientRequest(char *url, char *path, char *c_resp, char *ip, int cfd, int port, int timeout)
+{
+    if (checkpagecache("pagecache.txt", url) == 0)
+    {
+        printf("Page previously not stored in cache\n");
+
+        //add Page cache
+        addToPageCache("pagecache.txt", url);
+
+        //get the page from server
+        printf("Servicing the request through the remote server\n");
+        init_ServerRequest(url, c_resp, ip, cfd, port);
+    }
+    else {
+
+        //Check Time
+        if (checkTimeStamp("pagecache.txt", url, timeout) == 1)
+        {
+            printf("Page Timeout\n");
+
+            //Update the timestamp
+            printf("Updating the timestamp\n");
+            updateTimeStamp("pagecache.txt", url);
+
+            //get the page from Server
+            printf("Servicing the request through the remote server\n");
+            init_ServerRequest(url, c_resp, ip, cfd, port);
+
+        }
+        else {
+            printf("cache can service the request\n");
+            //Service the Request from Cache
+            send_from_cache(url, cfd);
+        }
+    }
+}
+
+
 int main(int argc, char **argv)
 {
-	if ((argc < 2) || (argc > 2)) {
-		printf("Usage --> ./[%s] [Port Number]\n", argv[0]);
+	if ((argc < 3) || (argc > 3)) {
+		printf("Usage --> ./[%s] [Port Number] [Timeout]\n", argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
@@ -173,6 +397,7 @@ int main(int argc, char **argv)
 	//int rbytes;
 	int option = 1;
 	int c_size;
+	int time_out = atoi(argv[2]);
 
 	sfd = socket(AF_INET, SOCK_STREAM, 0);		//Create a Socket
 	if (sfd == -1)
@@ -222,6 +447,7 @@ int main(int argc, char **argv)
 		/*Service the request in Child Process*/
 		if (child_pid == 0)
 		{
+			//close(sfd);
 			printf("In the child process\n");
 			
 			memset(r_buffer, 0, sizeof(r_buffer));
@@ -240,8 +466,9 @@ int main(int argc, char **argv)
 				memset(ip, 0, sizeof(ip));
 
 				sscanf(r_buffer, "%s %s %s", method, url, version);
+				printf("Rec request -> %s\n", r_buffer);
 
-				 char *conn_status = strstr(r_buffer, "Connection: keep-alive");
+				char *conn_status = strstr(r_buffer, "Connection: keep-alive");
 
                 /*Check for connection status and set the timeout period*/
                 if (conn_status)
@@ -256,8 +483,14 @@ int main(int argc, char **argv)
                     setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, (const char *) &timeout, sizeof(struct timeval));
                 }
 
-				printf("Method: %s\nPath: %s\nVersion: %s\n", method, url, version);
+				char *valid_url = strstr(url, "://");
+				char *valid_req = strstr(url, "favicon");
+				
+				printf("--> %p	%p\n", valid_url, valid_req);
 
+				if ((valid_url != NULL))
+				{
+				printf("Method: %s\nPath: %s\nVersion: %s\n", method, url, version);
 				/*Check for inappropriate method*/
 				if (strcmp(method, "GET") != 0)
 				{
@@ -343,6 +576,7 @@ int main(int argc, char **argv)
 					if (isURLpresent("IPCache.txt", path) == 1)
 					{
 						printf("URL found in IPCache.txt and DNS not required\n");
+						int valid_hostname = hostname_to_ip(path, ip);
 					}
 					else
 					{
@@ -378,9 +612,20 @@ int main(int argc, char **argv)
 					}
 				}
 
+				handleClientRequest(url, path, r_buffer, ip, cfd, 80, time_out);
 
+			}
+			else
+			{
+				close(cfd);
+			}
 
 			} //While LOOP
+			printf("Connection Close due to timeout for socket %d\n", client.sin_port);
+			close(cfd);
 		} //If loop
+
+		close(cfd);
+
 	} //For Loop
 }
