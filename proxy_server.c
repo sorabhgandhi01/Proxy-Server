@@ -252,11 +252,52 @@ char *str2md5(const char *str, int length) {
     return out;
 }
 
-void init_ServerRequest(char *url, char *c_resp, char *ip, int cfd, int port)
+void init_ServerRequest(char *url, char *path, char *version, char *ip, int cfd)
 {
-    char buf[1024];
+    char buf[MAX_BUF_SIZE];
+	char temp_url[512];
+	char g_url[512];
+	char http_req[512];
     struct sockaddr_in p_server;
     int p_sfd, p_sock, n;
+	int portf = 0, port = 0, i = 0;
+
+	strcpy(temp_url, url);
+	strcpy(g_url, url);
+
+	for(i = 7; i < strlen(url); i++) {
+		if(temp_url[i] == ':') {
+			portf=1;
+			break;
+		}
+	}
+
+	char *p = NULL;
+	p = strtok(temp_url, "//");
+	if(portf == 0)
+	{
+		port = 80;
+		p = strtok(NULL, "/");
+	}
+	else
+	{
+		p = strtok(NULL, ":");
+		p = strtok(NULL, "/");
+		port = atoi(p);
+	}
+
+	char *temp = NULL;
+	temp = strtok(g_url, "//");
+	temp = strtok(NULL, "/");
+
+	if(temp!=NULL)
+		temp=strtok(NULL, "\n");
+
+	if(temp != NULL)
+		sprintf(http_req, "GET /%s %s\r\nHost: %s\r\nConnection: close\r\n\r\n", temp, version, path);
+	else
+		sprintf(http_req, "GET / %s\r\nHost: %s\r\nConnection: close\r\n\r\n", version, path);
+
 
     memset(&p_server, 0, sizeof(p_server));
     p_server.sin_family = AF_INET;
@@ -264,7 +305,7 @@ void init_ServerRequest(char *url, char *c_resp, char *ip, int cfd, int port)
     p_server.sin_port = htons(port);
 
 	printf("For remote Connection: IP -> %s	Port -> %d\n", ip, port);
-	printf("For remote Connnection: HTTp Request -> %s\n", c_resp);
+	printf("For remote Connnection: HTTp Request -> %s\n", http_req);
 
     p_sfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (p_sfd < 0)
@@ -275,7 +316,7 @@ void init_ServerRequest(char *url, char *c_resp, char *ip, int cfd, int port)
     if (p_sock < 0)
         perror("Connection Failed");
     
-    if (send(p_sfd, c_resp, strlen(c_resp), 0) < 0)
+    if (send(p_sfd, http_req, strlen(http_req), 0) < 0)
         perror("Remote Socket write failed");
     else {
 
@@ -320,7 +361,7 @@ void send_from_cache(char *url, int cfd)
     free(data);
 }
 
-void handleClientRequest(char *url, char *path, char *c_resp, char *ip, int cfd, int port, int timeout)
+void handleClientRequest(char *url, char *path, char *version, char *ip, int cfd, int timeout)
 {
     if (checkpagecache("pagecache.txt", url) == 0)
     {
@@ -331,7 +372,7 @@ void handleClientRequest(char *url, char *path, char *c_resp, char *ip, int cfd,
 
         //get the page from server
         printf("Servicing the request through the remote server\n");
-        init_ServerRequest(url, c_resp, ip, cfd, port);
+        init_ServerRequest(url, path, version, ip, cfd);
     }
     else {
 
@@ -346,7 +387,7 @@ void handleClientRequest(char *url, char *path, char *c_resp, char *ip, int cfd,
 
             //get the page from Server
             printf("Servicing the request through the remote server\n");
-            init_ServerRequest(url, c_resp, ip, cfd, port);
+            init_ServerRequest(url, path, version, ip, cfd);
 
         }
         else {
@@ -586,7 +627,7 @@ int main(int argc, char **argv)
 					}
 				}
 
-				handleClientRequest(url_buffer, path, r_buffer, ip, cfd, 80, time_out);
+				handleClientRequest(url_buffer, path, version, ip, cfd, time_out);
 				
 			}
 			else
