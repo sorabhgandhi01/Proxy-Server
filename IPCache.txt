@@ -1,3 +1,0 @@
-morse.colorado.edu : 128.138.184.74
-netstech.org : 144.208.69.121
-www.websites.web.com : 64.69.213.61

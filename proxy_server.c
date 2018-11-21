@@ -372,15 +372,12 @@ int main(int argc, char **argv)
 	char r_buffer[MAX_BUF_SIZE];		//Stores the CLient Response
 	char s_buffer[512];					//Stores HTTP_Ok_Response
 	char e_buffer[512];					//Stores HTTP_Error_Response
-	char post_data[50];					//Stores Content of post data
 	char method[10];					//Stores the Requested HTTP Method
-	char url[30];						//Stores the Requested File Path
+	char url[256];						//Stores the Requested File Path
 	char path[35];						//Stores the domain name
 	char version[10];					//Stores the HTTP Version
-	char f_type[30];					//Stores the type of file requested
-	char f_name[30];					//Stores the file name requested
-
 	char ip[30];
+	char url_buffer[256];
 
 	/*HTTP Error Message Content in HTML Format*/
 	char error_msg[] = "<!DOCTYPE html><html><title>Bad Request</title>""<pre><h1>HTTP 400 Bad Request</h1></pre>""</html>\r\n";
@@ -461,8 +458,6 @@ int main(int argc, char **argv)
 				memset(url, 0, sizeof(url));
 				memset(path, 0, sizeof(path));
 				memset(version, 0, sizeof(version));
-				memset(f_type, 0, sizeof(f_type));
-				memset(f_name, 0, sizeof(f_name));
 				memset(ip, 0, sizeof(ip));
 
 				sscanf(r_buffer, "%s %s %s", method, url, version);
@@ -488,13 +483,16 @@ int main(int argc, char **argv)
 				
 				printf("--> %p	%p\n", valid_url, valid_req);
 
-				if ((valid_url != NULL))
+				if ((valid_url != NULL) && (valid_req == NULL))
 				{
+
 				printf("Method: %s\nPath: %s\nVersion: %s\n", method, url, version);
+				strcpy(url_buffer, url);
+
 				/*Check for inappropriate method*/
-				if (strcmp(method, "GET") != 0)
+				if ((strcmp(method, "GET") != 0) || ((strcmp(version, "HTTP/1.1") != 0) && (strcmp(version, "HTTP/1.0") != 0)) || (strncmp(url, "http://", 7) != 0))
 				{
-					printf("Inappropriate Method\n");
+					printf("Inappropriate Request\n");
 					c_size = strlen(error_msg);
 
 					if (conn_status)
@@ -509,30 +507,6 @@ int main(int argc, char **argv)
 						continue;
 					}
 					
-					else {
-						printf("Closing Socket %d\n", client.sin_port);
-						close(cfd);
-						exit(0);
-					}
-				}
-
-					/*Check for inappropriate version*/
-				if ((strcmp(version, "HTTP/1.1") != 0) && (strcmp(version, "HTTP/1.0") != 0))
-				{
-					printf("Inappropriate Version\n");
-					c_size = strlen(error_msg);
-
-					if (conn_status)
-						http_error_resp(e_buffer, "Bad Request", version, "keep-alive", c_size);
-					else
-						http_error_resp(e_buffer, "Bad Request", version, "Close", c_size);
-
-					send(cfd, e_buffer, strlen(e_buffer), 0);
-					send(cfd, error_msg, strlen(error_msg), 0);
-					
-					if (conn_status) {
-						continue;
-					}
 					else {
 						printf("Closing Socket %d\n", client.sin_port);
 						close(cfd);
@@ -612,12 +586,13 @@ int main(int argc, char **argv)
 					}
 				}
 
-				handleClientRequest(url, path, r_buffer, ip, cfd, 80, time_out);
-
+				handleClientRequest(url_buffer, path, r_buffer, ip, cfd, 80, time_out);
+				
 			}
 			else
 			{
 				close(cfd);
+				exit(0);
 			}
 
 			} //While LOOP
